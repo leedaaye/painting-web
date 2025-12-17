@@ -31,12 +31,14 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     await requireAdmin(req);
-    const body = (await req.json().catch(() => null)) as { name?: string } | null;
+    const body = (await req.json().catch(() => null)) as { name?: string; key?: string } | null;
     const name = typeof body?.name === 'string' ? body.name.trim() : '';
-    if (!name) return NextResponse.json({ error: 'Missing name' }, { status: 400 });
+    const key = typeof body?.key === 'string' ? body.key.trim() : '';
+    if (!name) return NextResponse.json({ error: '请输入名称' }, { status: 400 });
+    if (!key) return NextResponse.json({ error: '请输入密钥' }, { status: 400 });
 
-    const { plainKey, user } = await createUserKey(name);
-    return NextResponse.json({ user, key: plainKey }, { headers: { 'Cache-Control': 'no-store' } });
+    const { user } = await createUserKey(name, key);
+    return NextResponse.json({ user }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     if (err instanceof HttpError) return NextResponse.json({ error: err.message }, { status: err.status });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });

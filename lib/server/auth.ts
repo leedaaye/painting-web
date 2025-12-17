@@ -70,15 +70,17 @@ export async function bootstrapOrLoginAdmin(password: string) {
   return { token, bootstrapped: false };
 }
 
-export async function createUserKey(name: string) {
-  const plain = generateUserKeySecret();
-  const keyId = sha256Hex(plain);
-  const hashed = await bcrypt.hash(plain, 12);
+export async function createUserKey(name: string, customKey: string) {
+  const keyId = sha256Hex(customKey);
+  const existing = await prisma.userKey.findUnique({ where: { keyId } });
+  if (existing) throw new HttpError(400, '密钥已存在');
+
+  const hashed = await bcrypt.hash(customKey, 12);
   const created = await prisma.userKey.create({
     data: { name, key: hashed, keyId },
     select: { id: true, name: true, usageCount: true, lastUsedAt: true, isActive: true, createdAt: true, keyId: true },
   });
-  return { plainKey: plain, user: created };
+  return { user: created };
 }
 
 export async function updateAdminPassword(currentPassword: string, newPassword: string) {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, Copy, Check, Loader2, Settings } from 'lucide-react';
+import { Plus, Trash2, Loader2, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,11 +28,9 @@ interface UserKey {
 export default function UsersPage() {
   const [users, setUsers] = useState<UserKey[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [newKey, setNewKey] = useState<string | null>(null);
-  const [isNewKeyModalOpen, setIsNewKeyModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newUserName, setNewUserName] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [newUserKey, setNewUserKey] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -61,39 +59,34 @@ export default function UsersPage() {
       toast.error('请输入名称');
       return;
     }
+    if (!newUserKey.trim()) {
+      toast.error('请输入密钥');
+      return;
+    }
 
     setIsCreating(true);
     try {
       const res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newUserName }),
+        body: JSON.stringify({ name: newUserName, key: newUserKey }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || '创建密钥失败');
+        toast.error(data.error || '创建失败');
         return;
       }
 
-      setNewKey(data.key);
+      toast.success('创建成功');
       setIsCreateModalOpen(false);
-      setIsNewKeyModalOpen(true);
       setNewUserName('');
+      setNewUserKey('');
       loadUsers();
     } catch {
       toast.error('网络错误');
     } finally {
       setIsCreating(false);
-    }
-  };
-
-  const copyToClipboard = () => {
-    if (newKey) {
-      navigator.clipboard.writeText(newKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-      toast.success('已复制到剪贴板');
     }
   };
 
@@ -248,8 +241,8 @@ export default function UsersPage() {
       <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
         <DialogContent className="bg-card border-border">
           <DialogHeader>
-            <DialogTitle>创建用户密钥</DialogTitle>
-            <DialogDescription>输入用户名称以便识别</DialogDescription>
+            <DialogTitle>创建用户</DialogTitle>
+            <DialogDescription>输入用户名称和自定义密钥</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -261,6 +254,15 @@ export default function UsersPage() {
                 className="bg-muted/50"
               />
             </div>
+            <div className="space-y-2">
+              <Label>访问密钥</Label>
+              <Input
+                placeholder="用户登录时使用的密钥"
+                value={newUserKey}
+                onChange={(e) => setNewUserKey(e.target.value)}
+                className="bg-muted/50"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>
@@ -268,27 +270,6 @@ export default function UsersPage() {
             </Button>
             <Button onClick={handleCreateKey} disabled={isCreating} className="bg-primary text-background hover:bg-primary/90">
               {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : '创建'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* New Key Display Modal */}
-      <Dialog open={isNewKeyModalOpen} onOpenChange={setIsNewKeyModalOpen}>
-        <DialogContent className="bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>密钥创建成功</DialogTitle>
-            <DialogDescription>请立即复制此密钥，关闭后将无法再次查看</DialogDescription>
-          </DialogHeader>
-          <div className="flex items-center gap-2 p-4 bg-muted/50 rounded-lg border border-border mt-2">
-            <code className="flex-1 font-mono text-sm text-primary break-all">{newKey}</code>
-            <Button size="icon" variant="ghost" onClick={copyToClipboard} className="shrink-0">
-              {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-            </Button>
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setIsNewKeyModalOpen(false)} className="w-full">
-              完成
             </Button>
           </DialogFooter>
         </DialogContent>
