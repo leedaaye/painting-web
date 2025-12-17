@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sidebar: var(--sidebar);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Banana Palette */
+  --color-banana-50: #fffbea;
+  --color-banana-100: #fff1c1;
+  --color-banana-200: #ffdf88;
+  --color-banana-300: #ffc84d;
+  --color-banana-400: #ffb01b;
+  --color-banana-500: #f99607;
+  --color-banana-600: #dd7402;
+  --color-banana-700: #b75006;
+  --color-banana-800: #943d0c;
+  --color-banana-900: #7a330d;
+}
+
+:root {
+  --radius: 0.625rem;
+  /* Dark Mode Only - Banana Canvas Theme */
+  --background: #0b0f19;
+  --foreground: #f3f4f6;
+  --sidebar: #111827;
+
+  --card: #1f2937;
+  --card-foreground: #f3f4f6;
+
+  --popover: #1f2937;
+  --popover-foreground: #f3f4f6;
+
+  /* Banana Yellow Primary */
+  --primary: #ffb01b;
+  --primary-foreground: #0b0f19;
+
+  --secondary: #374151;
+  --secondary-foreground: #f3f4f6;
+
+  --muted: #1f2937;
+  --muted-foreground: #9ca3af;
+
+  --accent: #374151;
+  --accent-foreground: #ffb01b;
+
+  --destructive: #dc2626;
+  --destructive-foreground: #fef2f2;
+
+  --border: #374151;
+  --input: #374151;
+  --ring: #ffb01b;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #111827;
+}
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
+/* Shimmer Animation */
+@keyframes shimmer {
+  0% { transform: translateX(-100%) skewX(-12deg); }
+  100% { transform: translateX(200%) skewX(-12deg); }
+}
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
