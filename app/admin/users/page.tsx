@@ -17,7 +17,7 @@ interface UserUsage {
 interface UserKey {
   id: string;
   name: string;
-  keyId: string;
+  plainKey: string;
   usageCount: number;
   lastUsedAt: string | null;
   isActive: boolean;
@@ -35,7 +35,7 @@ export default function UsersPage() {
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserKey | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', keyId: '', isActive: true });
+  const [editForm, setEditForm] = useState({ name: '', plainKey: '', isActive: true });
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -92,13 +92,13 @@ export default function UsersPage() {
 
   const handleOpenSettings = (user: UserKey) => {
     setEditingUser(user);
-    setEditForm({ name: user.name, keyId: user.keyId, isActive: user.isActive });
+    setEditForm({ name: user.name, plainKey: user.plainKey, isActive: user.isActive });
     setIsSettingsModalOpen(true);
   };
 
   const handleSaveSettings = async () => {
     if (!editingUser) return;
-    if (!editForm.name.trim() || !editForm.keyId.trim()) {
+    if (!editForm.name.trim() || !editForm.plainKey.trim()) {
       toast.error('请填写所有字段');
       return;
     }
@@ -186,7 +186,7 @@ export default function UsersPage() {
             <thead className="bg-muted/50 text-muted-foreground uppercase text-xs font-medium">
               <tr>
                 <th className="px-6 py-4">名称</th>
-                <th className="px-6 py-4">密钥 ID</th>
+                <th className="px-6 py-4">登录密钥</th>
                 <th className="px-6 py-4">使用次数</th>
                 <th className="px-6 py-4">最后使用</th>
                 <th className="px-6 py-4">状态</th>
@@ -204,7 +204,7 @@ export default function UsersPage() {
                 users.map((user) => (
                   <tr key={user.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-6 py-4 font-medium text-foreground">{user.name}</td>
-                    <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{user.keyId}</td>
+                    <td className="px-6 py-4 text-muted-foreground font-mono text-xs">{user.plainKey}</td>
                     <td className="px-6 py-4 text-muted-foreground">{formatUsages(user)}</td>
                     <td className="px-6 py-4 text-muted-foreground text-xs">{formatDate(user.lastUsedAt)}</td>
                     <td className="px-6 py-4">
@@ -291,10 +291,10 @@ export default function UsersPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>密钥 ID</Label>
+              <Label>登录密钥</Label>
               <Input
-                value={editForm.keyId}
-                onChange={(e) => setEditForm({ ...editForm, keyId: e.target.value })}
+                value={editForm.plainKey}
+                onChange={(e) => setEditForm({ ...editForm, plainKey: e.target.value })}
                 className="bg-muted/50 font-mono"
               />
             </div>

@@ -11,7 +11,7 @@ export async function GET(req: Request) {
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
-        keyId: true,
+        plainKey: true,
         name: true,
         usageCount: true,
         lastUsedAt: true,

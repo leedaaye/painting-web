@@ -25,6 +25,7 @@ model UserKey {
   id         String      @id @default(cuid())
   key        String
   keyId      String      @unique
+  plainKey   String      @default("")
   name       String
   usageCount Int         @default(0)
   lastUsedAt DateTime?

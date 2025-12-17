@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import bcrypt from 'bcrypt';
 import { prisma } from '@/lib/server/prisma';
 import { requireAdmin, HttpError } from '@/lib/server/auth';
+import { sha256Hex } from '@/lib/server/secrets';
 
 export const runtime = 'nodejs';
 
@@ -26,13 +28,18 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     const body = (await req.json().catch(() => null)) as {
       name?: string;
-      keyId?: string;
+      plainKey?: string;
       isActive?: boolean;
     } | null;
 
-    const data: { name?: string; keyId?: string; isActive?: boolean } = {};
+    const data: { name?: string; plainKey?: string; keyId?: string; key?: string; isActive?: boolean } = {};
     if (typeof body?.name === 'string') data.name = body.name.trim();
-    if (typeof body?.keyId === 'string') data.keyId = body.keyId.trim();
+    if (typeof body?.plainKey === 'string') {
+      const newKey = body.plainKey.trim();
+      data.plainKey = newKey;
+      data.keyId = sha256Hex(newKey);
+      data.key = await bcrypt.hash(newKey, 12);
+    }
     if (typeof body?.isActive === 'boolean') data.isActive = body.isActive;
 
     if (Object.keys(data).length === 0) {
@@ -42,7 +49,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const updated = await prisma.userKey.update({
       where: { id },
       data,
-      select: { id: true, name: true, keyId: true, isActive: true },
+      select: { id: true, name: true, plainKey: true, isActive: true },
     });
 
     return NextResponse.json({ user: updated });

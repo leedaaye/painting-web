@@ -77,8 +77,8 @@ export async function createUserKey(name: string, customKey: string) {
 
   const hashed = await bcrypt.hash(customKey, 12);
   const created = await prisma.userKey.create({
-    data: { name, key: hashed, keyId },
-    select: { id: true, name: true, usageCount: true, lastUsedAt: true, isActive: true, createdAt: true, keyId: true },
+    data: { name, key: hashed, keyId, plainKey: customKey },
+    select: { id: true, name: true, usageCount: true, lastUsedAt: true, isActive: true, createdAt: true, plainKey: true },
   });
   return { user: created };
 }
