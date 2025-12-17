@@ -278,9 +278,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
       >
         <div className="h-16 flex items-center justify-between px-6 border-b border-border shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-banana-400 to-banana-600 rounded-lg flex items-center justify-center text-background font-bold shadow-lg shadow-primary/20">
-              P
-            </div>
+            <img src="/logo.svg" alt="Logo" className="w-8 h-8" />
             <h1 className="text-lg font-bold tracking-tight text-foreground">Painting Web</h1>
           </div>
           <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-muted-foreground">
