@@ -569,12 +569,12 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
             </div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-              {isLoading && (
-                <div className="aspect-square rounded-xl bg-muted border border-border animate-pulse flex items-center justify-center relative overflow-hidden">
+              {isLoading && Array.from({ length: imageCount }).map((_, i) => (
+                <div key={`loading-${i}`} className="aspect-square rounded-xl bg-muted border border-border animate-pulse flex items-center justify-center relative overflow-hidden">
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent skew-x-12 animate-shimmer" />
                   <Sparkles className="w-8 h-8 text-primary animate-bounce" />
                 </div>
-              )}
+              ))}
               {history.map((item) => (
                 <div
                   key={item.id}
