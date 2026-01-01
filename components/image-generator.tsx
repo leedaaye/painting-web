@@ -41,6 +41,8 @@ const IMAGE_SIZES: { value: ImageSize; label: string }[] = [
   { value: '4K', label: '4K' },
 ];
 
+const IMAGE_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
 const createId = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const getFileExtension = (mimeType: string) => {
@@ -68,6 +70,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
 
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
+  const [imageCount, setImageCount] = useState(1);
 
   const [selectedImage, setSelectedImage] = useState<HistoryItem | null>(null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -148,6 +151,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
           inputImage,
           aspectRatio: aspectRatio === 'auto' ? undefined : aspectRatio,
           imageSize: supportsImageSize ? imageSize : undefined,
+          count: imageCount,
         }),
       });
 
@@ -157,18 +161,21 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
       }
 
       const modelDisplay = models.find(m => m.modelKey === selectedModel)?.displayName || selectedModel;
+      const images = data.images || [data.image];
 
-      const newItem: HistoryItem = {
+      const newItems: HistoryItem[] = images.map((img: { data: string; mimeType: string }) => ({
         id: createId(),
         timestamp: Date.now(),
         params: { prompt, model: modelDisplay, aspectRatio, imageSize, referenceImage: refImage || undefined },
-        imageData: data.image.data,
-        mimeType: data.image.mimeType,
-      };
+        imageData: img.data,
+        mimeType: img.mimeType,
+      }));
 
-      await saveHistoryItem(newItem);
-      setHistory((prev) => [newItem, ...prev]);
-      toast.success('图片生成完成');
+      for (const item of newItems) {
+        await saveHistoryItem(item);
+      }
+      setHistory((prev) => [...newItems.reverse(), ...prev]);
+      toast.success(`${images.length} 张图片生成完成`);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : '生成失败';
       toast.error(msg);
@@ -427,6 +434,27 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
               ))}
             </div>
             {!supportsImageSize && <p className="text-[10px] text-muted-foreground">当前模型不支持分辨率控制</p>}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+              <Layers className="w-3 h-3" />
+              生成数量 (COUNT)
+            </label>
+            <div className="flex flex-wrap gap-1">
+              {IMAGE_COUNTS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setImageCount(c)}
+                  className={cn(
+                    'w-8 h-8 text-xs font-bold rounded transition-all',
+                    imageCount === c ? 'bg-secondary text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, Loader2, ChevronUp, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,6 +16,7 @@ interface Provider {
   modelId: string;
   baseUrl: string;
   isActive: boolean;
+  sortOrder: number;
   apiKey?: string;
 }
 
@@ -114,6 +115,33 @@ export default function ProvidersPage() {
     }
   };
 
+  const handleMove = async (index: number, direction: 'up' | 'down') => {
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= providers.length) return;
+
+    const newProviders = [...providers];
+    [newProviders[index], newProviders[newIndex]] = [newProviders[newIndex], newProviders[index]];
+
+    const orders = newProviders.map((p, i) => ({ id: p.id, sortOrder: i }));
+
+    setProviders(newProviders);
+
+    try {
+      const res = await fetch('/api/admin/providers', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orders }),
+      });
+      if (!res.ok) {
+        toast.error('排序保存失败');
+        loadProviders();
+      }
+    } catch {
+      toast.error('网络错误');
+      loadProviders();
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -137,6 +165,7 @@ export default function ProvidersPage() {
           <table className="w-full text-sm text-left">
             <thead className="bg-muted/50 text-muted-foreground uppercase text-xs font-medium">
               <tr>
+                <th className="px-6 py-4">排序</th>
                 <th className="px-6 py-4">状态</th>
                 <th className="px-6 py-4">显示名称</th>
                 <th className="px-6 py-4">内部名称</th>
@@ -148,13 +177,35 @@ export default function ProvidersPage() {
             <tbody className="divide-y divide-border">
               {providers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">
                     暂无服务商配置，点击上方按钮添加
                   </td>
                 </tr>
               ) : (
-                providers.map((provider) => (
+                providers.map((provider, index) => (
                   <tr key={provider.id} className="hover:bg-muted/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          disabled={index === 0}
+                          onClick={() => handleMove(index, 'up')}
+                        >
+                          <ChevronUp className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          disabled={index === providers.length - 1}
+                          onClick={() => handleMove(index, 'down')}
+                        >
+                          <ChevronDown className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <div
                         className={cn(

@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   try {
     await requireAdmin(req);
     const providers = await prisma.apiProvider.findMany({
-      orderBy: { createdAt: 'desc' },
+      orderBy: { sortOrder: 'asc' },
       select: {
         id: true,
         name: true,
@@ -17,6 +17,7 @@ export async function GET(req: Request) {
         modelId: true,
         displayName: true,
         isActive: true,
+        sortOrder: true,
         createdAt: true,
         updatedAt: true,
         apiKey: true,
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
       modelId?: string;
       displayName?: string;
       isActive?: boolean;
+      sortOrder?: number;
     } | null;
 
     const id = typeof body?.id === 'string' ? body.id : undefined;
@@ -49,6 +51,7 @@ export async function POST(req: Request) {
     const modelId = typeof body?.modelId === 'string' ? body.modelId.trim() : '';
     const displayName = typeof body?.displayName === 'string' ? body.displayName.trim() : '';
     const isActive = typeof body?.isActive === 'boolean' ? body.isActive : true;
+    const sortOrder = typeof body?.sortOrder === 'number' ? body.sortOrder : 0;
 
     if (!name || !baseUrl || !modelId || !displayName) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -71,11 +74,12 @@ export async function POST(req: Request) {
             modelId,
             displayName,
             isActive,
+            sortOrder,
             ...(apiKey ? { apiKey } : {}),
           },
         })
       : await prisma.apiProvider.create({
-          data: { name, baseUrl, apiKey: apiKey!, modelId, displayName, isActive },
+          data: { name, baseUrl, apiKey: apiKey!, modelId, displayName, isActive, sortOrder },
         });
 
     return NextResponse.json({
@@ -86,12 +90,36 @@ export async function POST(req: Request) {
         modelId: saved.modelId,
         displayName: saved.displayName,
         isActive: saved.isActive,
+        sortOrder: saved.sortOrder,
         createdAt: saved.createdAt,
         updatedAt: saved.updatedAt,
         apiKeyMasked: maskSecret(saved.apiKey),
         hasApiKey: Boolean(saved.apiKey),
       },
     });
+  } catch (err) {
+    if (err instanceof HttpError) return NextResponse.json({ error: err.message }, { status: err.status });
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+  }
+}
+
+export async function PUT(req: Request) {
+  try {
+    await requireAdmin(req);
+    const body = (await req.json().catch(() => null)) as { orders?: { id: string; sortOrder: number }[] } | null;
+    const orders = Array.isArray(body?.orders) ? body.orders : [];
+
+    if (orders.length === 0) {
+      return NextResponse.json({ error: 'No orders provided' }, { status: 400 });
+    }
+
+    await prisma.$transaction(
+      orders.map(({ id, sortOrder }) =>
+        prisma.apiProvider.update({ where: { id }, data: { sortOrder } })
+      )
+    );
+
+    return NextResponse.json({ ok: true });
   } catch (err) {
     if (err instanceof HttpError) return NextResponse.json({ error: err.message }, { status: err.status });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });

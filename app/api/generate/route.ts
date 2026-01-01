@@ -14,10 +14,12 @@ export async function POST(req: Request) {
       inputImage?: { mimeType: string; data: string };
       aspectRatio?: string;
       imageSize?: string;
+      count?: number;
     } | null;
 
     const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
     const modelKey = typeof body?.modelKey === 'string' ? body.modelKey : '';
+    const count = Math.min(Math.max(typeof body?.count === 'number' ? Math.floor(body.count) : 1, 1), 10);
 
     if (!prompt) return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });
     if (!modelKey) return NextResponse.json({ error: 'Missing modelKey' }, { status: 400 });
@@ -38,25 +40,30 @@ export async function POST(req: Request) {
     const aspectRatio = typeof body?.aspectRatio === 'string' ? body.aspectRatio : undefined;
     const imageSize = typeof body?.imageSize === 'string' ? body.imageSize : undefined;
 
-    const image = await generateImageViaGemini(provider, { prompt, inputImage, aspectRatio, imageSize });
+    const images: { mimeType: string; data: string }[] = [];
+    for (let i = 0; i < count; i++) {
+      const image = await generateImageViaGemini(provider, { prompt, inputImage, aspectRatio, imageSize });
+      images.push(image);
+    }
 
     const [updated] = await prisma.$transaction([
       prisma.userKey.update({
         where: { id: user.id },
-        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+        data: { usageCount: { increment: count }, lastUsedAt: new Date() },
         select: { usageCount: true, lastUsedAt: true },
       }),
       prisma.userUsage.upsert({
         where: { userId_modelName: { userId: user.id, modelName: provider.displayName } },
-        create: { userId: user.id, modelName: provider.displayName, count: 1 },
-        update: { count: { increment: 1 } },
+        create: { userId: user.id, modelName: provider.displayName, count },
+        update: { count: { increment: count } },
       }),
     ]);
 
     return NextResponse.json(
       {
         model: { modelKey, displayName: provider.displayName },
-        image,
+        images,
+        image: images[0],
         usage: { usageCount: updated.usageCount, lastUsedAt: updated.lastUsedAt },
       },
       { headers: { 'Cache-Control': 'no-store' } }

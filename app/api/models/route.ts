@@ -11,7 +11,7 @@ export async function GET(req: Request) {
     const providers = await prisma.apiProvider.findMany({
       where: { isActive: true },
       select: { id: true, displayName: true, name: true },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { sortOrder: 'asc' },
     });
 
     const models = providers.map((p) => ({
