@@ -41,8 +41,6 @@ const IMAGE_SIZES: { value: ImageSize; label: string }[] = [
   { value: '4K', label: '4K' },
 ];
 
-const IMAGE_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
 const createId = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const getFileExtension = (mimeType: string) => {
@@ -441,20 +439,14 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
               <Layers className="w-3 h-3" />
               生成数量 (COUNT)
             </label>
-            <div className="flex flex-wrap gap-1">
-              {IMAGE_COUNTS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setImageCount(c)}
-                  className={cn(
-                    'w-8 h-8 text-xs font-bold rounded transition-all',
-                    imageCount === c ? 'bg-secondary text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={imageCount}
+              onChange={(e) => setImageCount(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+              className="w-full px-3 py-2 text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
           </div>
         </div>
 
