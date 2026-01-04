@@ -2,6 +2,14 @@ import 'server-only';
 import type { ApiProvider } from '@prisma/client';
 
 export type InlineImage = { mimeType: string; data: string };
+export type LabeledImage = InlineImage & { label: string };
+
+const MAX_LABEL_LEN = 32;
+const normalizeLabel = (v: string, idx: number): string => {
+  const fallback = `参考图${idx + 1}`;
+  const s = v.trim().replace(/[\r\n\[\]]+/g, '').slice(0, MAX_LABEL_LEN);
+  return s || fallback;
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -31,7 +39,7 @@ function extractInlineImage(payload: unknown): InlineImage | null {
 
 export type GeminiGenerateInput = {
   prompt: string;
-  inputImage?: InlineImage;
+  inputImages?: LabeledImage[];
   aspectRatio?: string;
   imageSize?: string;
 };
@@ -39,7 +47,13 @@ export type GeminiGenerateInput = {
 export async function generateImageViaGemini(provider: ApiProvider, input: GeminiGenerateInput): Promise<InlineImage> {
   const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
   if (input.prompt) parts.push({ text: input.prompt });
-  if (input.inputImage) parts.push({ inlineData: { mimeType: input.inputImage.mimeType, data: input.inputImage.data } });
+  if (input.inputImages?.length) {
+    for (const [idx, img] of input.inputImages.entries()) {
+      const label = normalizeLabel(img.label, idx);
+      parts.push({ text: `[${label}]` });
+      parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+    }
+  }
 
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts }],

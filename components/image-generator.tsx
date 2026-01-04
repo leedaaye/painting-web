@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useAppStore, type ImageAspectRatio, type ImageSize } from '@/lib/store';
 import { saveHistoryItem, getAllHistory, deleteHistoryItem, deleteHistoryItems } from '@/lib/db';
-import type { HistoryItem } from '@/lib/types';
+import type { HistoryItem, ReferenceImage } from '@/lib/types';
 import { ImageDetailModal } from '@/components/image-detail-modal';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -43,6 +43,35 @@ const IMAGE_SIZES: { value: ImageSize; label: string }[] = [
 
 const createId = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+const MAX_REF_IMAGES = 14;
+const MAX_REF_IMAGE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('File read failed'));
+    reader.onabort = () => reject(new Error('File read aborted'));
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('Unexpected file read result'));
+    };
+    reader.readAsDataURL(file);
+  });
+
+const parseDataUrl = (value: string): { mimeType: string; data: string } | null => {
+  if (!value.startsWith('data:')) return null;
+  const commaIdx = value.indexOf(',');
+  if (commaIdx === -1) return null;
+  const meta = value.slice(5, commaIdx);
+  const base64Idx = meta.toLowerCase().indexOf(';base64');
+  if (base64Idx === -1) return null;
+  const mimeType = meta.slice(0, base64Idx).split(';')[0];
+  const data = value.slice(commaIdx + 1);
+  if (!mimeType || !data) return null;
+  return { mimeType, data };
+};
+
 const getFileExtension = (mimeType: string) => {
   const map: Record<string, string> = {
     'image/jpeg': 'jpg',
@@ -64,7 +93,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [refImage, setRefImage] = useState<string | null>(null);
+  const [refImages, setRefImages] = useState<ReferenceImage[]>([]);
 
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -76,6 +105,17 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const refImageOpToken = useRef(0);
+
+  const clearRefImages = useCallback(() => {
+    refImageOpToken.current += 1;
+    setRefImages([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, []);
+
+  useEffect(() => {
+    return () => { refImageOpToken.current += 1; };
+  }, []);
 
   useEffect(() => {
     loadHistory();
@@ -106,27 +146,52 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
     }
   };
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast.error('请选择图片文件');
-      e.target.value = '';
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+
+    const opToken = refImageOpToken.current;
+    const remaining = MAX_REF_IMAGES - refImages.length;
+    if (remaining <= 0) {
+      toast.error(`最多上传${MAX_REF_IMAGES}张参考图`);
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('图片过大，请使用 5MB 以下的图片');
-      e.target.value = '';
-      return;
+
+    const validFiles: File[] = [];
+    for (const file of files.slice(0, remaining)) {
+      if (!file.type.startsWith('image/')) {
+        toast.error(`${file.name} 不是图片文件`);
+        continue;
+      }
+      if (!ALLOWED_MIME_TYPES.has(file.type)) {
+        toast.error(`${file.name} 格式不支持`);
+        continue;
+      }
+      if (file.size > MAX_REF_IMAGE_BYTES) {
+        toast.error(`${file.name} 过大，请使用5MB以下的图片`);
+        continue;
+      }
+      validFiles.push(file);
     }
-    const reader = new FileReader();
-    reader.onerror = () => { toast.error('读取图片失败'); e.target.value = ''; };
-    reader.onload = () => {
-      setRefImage(reader.result as string);
-      e.target.value = '';
-    };
-    reader.readAsDataURL(file);
-  }, []);
+    if (!validFiles.length) return;
+
+    const results = await Promise.allSettled(validFiles.map(readFileAsDataUrl));
+    if (opToken !== refImageOpToken.current) return;
+
+    const next: ReferenceImage[] = [];
+    results.forEach((result, idx) => {
+      if (result.status === 'fulfilled') next.push({ id: createId(), data: result.value });
+      else toast.error(`读取 ${validFiles[idx].name} 失败`);
+    });
+    if (!next.length) return;
+
+    setRefImages(prev => {
+      const cap = MAX_REF_IMAGES - prev.length;
+      if (cap <= 0) return prev;
+      return [...prev, ...next.slice(0, cap)];
+    });
+  }, [refImages.length]);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || isLoading || !selectedModel) return;
@@ -135,10 +200,14 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
     if (window.innerWidth < 768) setIsSidebarOpen(false);
 
     try {
-      const inputImage = refImage ? {
-        mimeType: refImage.split(';')[0].split(':')[1],
-        data: refImage.split(',')[1],
-      } : undefined;
+      const inputImages = refImages.length > 0
+        ? refImages.map((img, idx) => {
+            const parsed = parseDataUrl(img.data);
+            if (!parsed) throw new Error(`参考图${idx + 1} 数据无效，请重新上传`);
+            if (!ALLOWED_MIME_TYPES.has(parsed.mimeType)) throw new Error(`参考图${idx + 1} 格式不支持`);
+            return { mimeType: parsed.mimeType, data: parsed.data, label: `参考图${idx + 1}` };
+          })
+        : undefined;
 
       const res = await fetch('/api/generate', {
         method: 'POST',
@@ -146,7 +215,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
         body: JSON.stringify({
           prompt,
           modelKey: selectedModel,
-          inputImage,
+          inputImages,
           aspectRatio: aspectRatio === 'auto' ? undefined : aspectRatio,
           imageSize: supportsImageSize ? imageSize : undefined,
           count: imageCount,
@@ -164,7 +233,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
       const newItems: HistoryItem[] = images.map((img: { data: string; mimeType: string }) => ({
         id: createId(),
         timestamp: Date.now(),
-        params: { prompt, model: modelDisplay, aspectRatio, imageSize, referenceImage: refImage || undefined },
+        params: { prompt, model: modelDisplay, aspectRatio, imageSize, referenceImages: refImages.length > 0 ? refImages : undefined },
         imageData: img.data,
         mimeType: img.mimeType,
       }));
@@ -186,11 +255,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
     setPrompt(item.params.prompt);
     setAspectRatio(item.params.aspectRatio);
     setImageSize(item.params.imageSize);
-    if (item.params.referenceImage) {
-      setRefImage(item.params.referenceImage);
-    } else {
-      setRefImage(null);
-    }
+    setRefImages(item.params.referenceImages || []);
     setIsSidebarOpen(true);
   };
 
@@ -350,26 +415,70 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                参考图 (REFERENCE)
+                参考图 ({refImages.length}/{MAX_REF_IMAGES})
               </Label>
-              {refImage && (
-                <button onClick={() => setRefImage(null)} className="text-[10px] text-destructive hover:text-destructive/80">
-                  移除
+              {refImages.length > 0 && (
+                <button onClick={clearRefImages} className="text-[10px] text-destructive hover:text-destructive/80">
+                  全部移除
                 </button>
               )}
             </div>
-            {!refImage ? (
-              <label className="flex items-center justify-center w-full h-16 border border-border border-dashed rounded-lg cursor-pointer bg-muted/30 hover:bg-muted/60 hover:border-muted-foreground transition-all group">
+            {refImages.length > 0 && (
+              <div className="grid grid-cols-4 gap-2">
+                {refImages.map((img, idx) => (
+                  <div
+                    key={img.id}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', img.id);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const fromId = e.dataTransfer.getData('text/plain');
+                      if (!fromId || fromId === img.id) return;
+                      setRefImages(prev => {
+                        const fromIdx = prev.findIndex(i => i.id === fromId);
+                        const toIdx = prev.findIndex(i => i.id === img.id);
+                        if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+                        const next = [...prev];
+                        const [moved] = next.splice(fromIdx, 1);
+                        next.splice(toIdx, 0, moved);
+                        return next;
+                      });
+                    }}
+                    className="relative aspect-square bg-muted/30 rounded-lg overflow-hidden border border-border group cursor-move hover:border-primary/50 transition-colors"
+                  >
+                    <img src={img.data} alt={`参考图${idx + 1}`} className="w-full h-full object-cover" />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] text-center py-0.5">
+                      参考图{idx + 1}
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setRefImages(prev => prev.filter(i => i.id !== img.id));
+                      }}
+                      className="absolute top-1 right-1 w-5 h-5 bg-black/60 hover:bg-destructive rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-3 h-3 text-white" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {refImages.length < MAX_REF_IMAGES && (
+              <label className="flex items-center justify-center w-full h-12 border border-border border-dashed rounded-lg cursor-pointer bg-muted/30 hover:bg-muted/60 hover:border-muted-foreground transition-all group">
                 <div className="flex items-center gap-2">
                   <Upload className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
                   <span className="text-xs text-muted-foreground">上传参考图片</span>
                 </div>
-                <input type="file" className="hidden" accept="image/*" onChange={handleFileSelect} ref={fileInputRef} />
+                <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileSelect} ref={fileInputRef} />
               </label>
-            ) : (
-              <div className="relative w-full bg-muted/30 rounded-lg overflow-hidden border border-border group">
-                <img src={refImage} alt="Ref" className="w-full max-h-40 object-contain opacity-80 group-hover:opacity-100 transition-opacity" />
-              </div>
             )}
           </div>
 
