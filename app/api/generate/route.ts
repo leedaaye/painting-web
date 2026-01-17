@@ -127,7 +127,9 @@ export async function POST(req: Request) {
               send('image', result.value);
               successCount++;
             } else {
-              const msg = result.reason instanceof Error ? result.reason.message : 'Generation failed';
+              const err = result.reason;
+              const msg = err instanceof Error ? err.message : 'Generation failed';
+              console.error('[Generate] Image generation failed:', msg, err);
               send('error', { message: msg });
             }
           }

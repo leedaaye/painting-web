@@ -288,8 +288,10 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
             } else if (event === 'error' && dataStr) {
               try {
                 const err = JSON.parse(dataStr);
+                console.error('[Generate] SSE error event:', err.message);
                 toast.error(err.message || 'Image generation failed');
               } catch (parseError) {
+                console.error('[Generate] Failed to parse error event:', dataStr);
                 toast.error('Image generation failed');
               }
             }
