@@ -1,9 +1,46 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/server/prisma';
 import { requireUser, HttpError } from '@/lib/server/auth';
-import { generateImageViaGemini } from '@/lib/server/gemini';
+import { generateImageViaGemini, GeminiHttpError, GeminiTimeoutError } from '@/lib/server/gemini';
 
 export const runtime = 'nodejs';
+export const maxDuration = 60;
+
+const DEFAULT_GEMINI_TIMEOUT_MS = 25_000;
+const DEFAULT_GEN_CONCURRENCY = 2;
+const MAX_GEN_CONCURRENCY = 5;
+
+const envPositiveInt = (key: string, fallback: number): number => {
+  const n = Number(process.env[key]);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+};
+
+const GEMINI_TIMEOUT_MS = envPositiveInt('GEMINI_TIMEOUT_MS', DEFAULT_GEMINI_TIMEOUT_MS);
+const GEN_CONCURRENCY = Math.min(envPositiveInt('IMAGE_GEN_CONCURRENCY', DEFAULT_GEN_CONCURRENCY), MAX_GEN_CONCURRENCY);
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  fn: (value: T, idx: number) => Promise<R>
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(values.length);
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (true) {
+      const idx = nextIndex++;
+      if (idx >= values.length) return;
+      try {
+        results[idx] = { status: 'fulfilled', value: await fn(values[idx], idx) };
+      } catch (reason) {
+        results[idx] = { status: 'rejected', reason };
+      }
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
 
 const MAX_INPUT_IMAGES = 14;
 const MAX_BASE64_LEN = Math.ceil((5 * 1024 * 1024 * 4) / 3) + 4;
@@ -64,37 +101,77 @@ export async function POST(req: Request) {
     const aspectRatio = typeof body?.aspectRatio === 'string' ? body.aspectRatio : undefined;
     const imageSize = typeof body?.imageSize === 'string' ? body.imageSize : undefined;
 
-    const images: { mimeType: string; data: string }[] = [];
     const validInputImages = inputImages?.length ? inputImages : undefined;
-    for (let i = 0; i < count; i++) {
-      const image = await generateImageViaGemini(provider, { prompt, inputImages: validInputImages, aspectRatio, imageSize });
-      images.push(image);
-    }
+    const encoder = new TextEncoder();
 
-    const [updated] = await prisma.$transaction([
-      prisma.userKey.update({
-        where: { id: user.id },
-        data: { usageCount: { increment: count }, lastUsedAt: new Date() },
-        select: { usageCount: true, lastUsedAt: true },
-      }),
-      prisma.userUsage.upsert({
-        where: { userId_modelName: { userId: user.id, modelName: provider.displayName } },
-        create: { userId: user.id, modelName: provider.displayName, count },
-        update: { count: { increment: count } },
-      }),
-    ]);
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const send = (event: string, data: unknown) => {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
 
-    return NextResponse.json(
-      {
-        model: { modelKey, displayName: provider.displayName },
-        images,
-        image: images[0],
-        usage: { usageCount: updated.usageCount, lastUsedAt: updated.lastUsedAt },
+          const results = await mapWithConcurrency(
+            Array(count).fill(null),
+            GEN_CONCURRENCY,
+            async () => generateImageViaGemini(
+              provider,
+              { prompt, inputImages: validInputImages, aspectRatio, imageSize },
+              { timeoutMs: GEMINI_TIMEOUT_MS, signal: req.signal }
+            )
+          );
+
+          let successCount = 0;
+          for (const result of results) {
+            if (result.status === 'fulfilled') {
+              send('image', result.value);
+              successCount++;
+            } else {
+              const msg = result.reason instanceof Error ? result.reason.message : 'Generation failed';
+              send('error', { message: msg });
+            }
+          }
+
+          if (successCount > 0) {
+            const [updated] = await prisma.$transaction([
+              prisma.userKey.update({
+                where: { id: user.id },
+                data: { usageCount: { increment: successCount }, lastUsedAt: new Date() },
+                select: { usageCount: true, lastUsedAt: true },
+              }),
+              prisma.userUsage.upsert({
+                where: { userId_modelName: { userId: user.id, modelName: provider.displayName } },
+                create: { userId: user.id, modelName: provider.displayName, count: successCount },
+                update: { count: { increment: successCount } },
+              }),
+            ]);
+            send('done', { usage: { usageCount: updated.usageCount, lastUsedAt: updated.lastUsedAt } });
+          } else {
+            send('done', {});
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'Stream error';
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ message: msg })}\n\n`));
+        } finally {
+          controller.close();
+        }
       },
-      { headers: { 'Cache-Control': 'no-store' } }
-    );
+    });
+
+    return new NextResponse(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
   } catch (err) {
     if (err instanceof HttpError) return NextResponse.json({ error: err.message }, { status: err.status });
+    if (err instanceof GeminiTimeoutError) return NextResponse.json({ error: err.message }, { status: 504 });
+    if (err instanceof GeminiHttpError) {
+      const status = err.status === 429 ? 503 : 502;
+      return NextResponse.json({ error: err.message }, { status });
+    }
     const msg = err instanceof Error ? err.message : 'Internal error';
     return NextResponse.json({ error: msg }, { status: 500 });
   }

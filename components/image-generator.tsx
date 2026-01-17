@@ -103,9 +103,11 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const refImageOpToken = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const clearRefImages = useCallback(() => {
     refImageOpToken.current += 1;
@@ -196,12 +198,24 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
   const handleGenerate = async () => {
     if (!prompt.trim() || isLoading || !selectedModel) return;
 
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const snapshotPrompt = prompt;
+    const snapshotModel = selectedModel;
+    const snapshotAspectRatio = aspectRatio;
+    const snapshotImageSize = imageSize;
+    const snapshotRefImages = refImages;
+    const snapshotModels = models;
+
     setIsLoading(true);
+    setProgress({ current: 0, total: imageCount });
     if (window.innerWidth < 768) setIsSidebarOpen(false);
 
     try {
-      const inputImages = refImages.length > 0
-        ? refImages.map((img, idx) => {
+      const inputImages = snapshotRefImages.length > 0
+        ? snapshotRefImages.map((img, idx) => {
             const parsed = parseDataUrl(img.data);
             if (!parsed) throw new Error(`参考图${idx + 1} 数据无效，请重新上传`);
             if (!ALLOWED_MIME_TYPES.has(parsed.mimeType)) throw new Error(`参考图${idx + 1} 格式不支持`);
@@ -213,41 +227,85 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt,
-          modelKey: selectedModel,
+          prompt: snapshotPrompt,
+          modelKey: snapshotModel,
           inputImages,
-          aspectRatio: aspectRatio === 'auto' ? undefined : aspectRatio,
-          imageSize: supportsImageSize ? imageSize : undefined,
+          aspectRatio: snapshotAspectRatio === 'auto' ? undefined : snapshotAspectRatio,
+          imageSize: supportsImageSize ? snapshotImageSize : undefined,
           count: imageCount,
         }),
+        signal: controller.signal,
       });
 
-      const data = await res.json();
       if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         throw new Error(data.error || 'Generation failed');
       }
 
-      const modelDisplay = models.find(m => m.modelKey === selectedModel)?.displayName || selectedModel;
-      const images = data.images || [data.image];
+      if (!res.body) throw new Error('No response body');
 
-      const newItems: HistoryItem[] = images.map((img: { data: string; mimeType: string }) => ({
-        id: createId(),
-        timestamp: Date.now(),
-        params: { prompt, model: modelDisplay, aspectRatio, imageSize, referenceImages: refImages.length > 0 ? refImages : undefined },
-        imageData: img.data,
-        mimeType: img.mimeType,
-      }));
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let successCount = 0;
+      const modelDisplay = snapshotModels.find(m => m.modelKey === snapshotModel)?.displayName || snapshotModel;
 
-      for (const item of newItems) {
-        await saveHistoryItem(item);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const lines = part.split('\n');
+            let event = '';
+            let dataStr = '';
+            for (const line of lines) {
+              if (line.startsWith('event: ')) event = line.slice(7).trim();
+              else if (line.startsWith('data: ')) dataStr = line.slice(6).trim();
+            }
+
+            if (event === 'image' && dataStr) {
+              try {
+                const img = JSON.parse(dataStr);
+                const newItem: HistoryItem = {
+                  id: createId(),
+                  timestamp: Date.now(),
+                  params: { prompt: snapshotPrompt, model: modelDisplay, aspectRatio: snapshotAspectRatio, imageSize: snapshotImageSize, referenceImages: snapshotRefImages.length > 0 ? snapshotRefImages : undefined },
+                  imageData: img.data,
+                  mimeType: img.mimeType,
+                };
+                await saveHistoryItem(newItem);
+                setHistory((prev) => [newItem, ...prev]);
+                successCount++;
+                setProgress((prev) => prev ? { ...prev, current: prev.current + 1 } : null);
+              } catch (parseError) {
+                console.error('Failed to parse image data:', parseError);
+              }
+            } else if (event === 'error' && dataStr) {
+              try {
+                const err = JSON.parse(dataStr);
+                toast.error(err.message || 'Image generation failed');
+              } catch (parseError) {
+                toast.error('Image generation failed');
+              }
+            }
+          }
+        }
+      } finally {
+        reader.cancel().catch(() => {});
       }
-      setHistory((prev) => [...newItems.reverse(), ...prev]);
-      toast.success(`${images.length} 张图片生成完成`);
+
+      if (successCount > 0) toast.success(`${successCount} 张图片生成完成`);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : '生成失败';
       toast.error(msg);
     } finally {
       setIsLoading(false);
+      setProgress(null);
     }
   };
 
@@ -568,7 +626,7 @@ export function ImageGenerator({ onLogout }: ImageGeneratorProps) {
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                生成中...
+                {progress ? `生成中 (${progress.current}/${progress.total})...` : '生成中...'}
               </>
             ) : (
               <>

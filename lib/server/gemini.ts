@@ -4,6 +4,31 @@ import type { ApiProvider } from '@prisma/client';
 export type InlineImage = { mimeType: string; data: string };
 export type LabeledImage = InlineImage & { label: string };
 
+export class GeminiTimeoutError extends Error {
+  timeoutMs: number;
+  constructor(timeoutMs: number, message?: string) {
+    super(message ?? `Gemini request timed out after ${timeoutMs}ms`);
+    this.name = 'GeminiTimeoutError';
+    this.timeoutMs = timeoutMs;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export class GeminiHttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'GeminiHttpError';
+    this.status = status;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export type GeminiRequestOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+};
+
 const MAX_LABEL_LEN = 32;
 const normalizeLabel = (v: string, idx: number): string => {
   const fallback = `参考图${idx + 1}`;
@@ -44,7 +69,11 @@ export type GeminiGenerateInput = {
   imageSize?: string;
 };
 
-export async function generateImageViaGemini(provider: ApiProvider, input: GeminiGenerateInput): Promise<InlineImage> {
+export async function generateImageViaGemini(
+  provider: ApiProvider,
+  input: GeminiGenerateInput,
+  options: GeminiRequestOptions = {}
+): Promise<InlineImage> {
   const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
   if (input.prompt) parts.push({ text: input.prompt });
   if (input.inputImages?.length) {
@@ -72,25 +101,45 @@ export async function generateImageViaGemini(provider: ApiProvider, input: Gemin
   const normalizedBase = provider.baseUrl.trim().replace(/\/+$/, '');
   const url = `${normalizedBase}/v1beta/models/${encodeURIComponent(provider.modelId)}:generateContent`;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${provider.apiKey}`,
-      'x-goog-api-key': provider.apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const timeoutMs =
+    typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? Math.floor(options.timeoutMs)
+      : 30_000;
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    let msg = `Upstream error: ${response.status}`;
-    try {
-      const parsed = JSON.parse(text) as { error?: { message?: string } };
-      msg = parsed?.error?.message || msg;
-    } catch {}
-    throw new Error(msg);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (options.signal) {
+    if (options.signal.aborted) controller.abort();
+    else options.signal.addEventListener('abort', onAbort, { once: true });
   }
+
+  let didTimeout = false;
+  const timeoutId = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${provider.apiKey}`,
+        'x-goog-api-key': provider.apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      let msg = `Upstream error: ${response.status}`;
+      try {
+        const parsed = JSON.parse(text) as { error?: { message?: string } };
+        msg = parsed?.error?.message || msg;
+      } catch {}
+      throw new GeminiHttpError(response.status, msg);
+    }
 
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('text/event-stream') || contentType.includes('text/plain')) {
@@ -109,8 +158,17 @@ export async function generateImageViaGemini(provider: ApiProvider, input: Gemin
     throw new Error('No image found in SSE response');
   }
 
-  const data: unknown = await response.json();
-  const extracted = extractInlineImage(data);
-  if (!extracted) throw new Error('No image found in JSON response');
-  return extracted;
+    const data: unknown = await response.json();
+    const extracted = extractInlineImage(data);
+    if (!extracted) throw new Error('No image found in JSON response');
+    return extracted;
+  } catch (err) {
+    if (didTimeout && err instanceof Error && err.name === 'AbortError') {
+      throw new GeminiTimeoutError(timeoutMs);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+    if (options.signal) options.signal.removeEventListener('abort', onAbort);
+  }
 }
